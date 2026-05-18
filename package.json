@@ -1,0 +1,17 @@
+{
+  "name": "b2b-mailer-server",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2",
+    "cookie-parser": "^1",
+    "cors": "^2",
+    "dotenv": "^16",
+    "express": "^4",
+    "jsonwebtoken": "^9",
+    "nodemailer": "^6",
+    "ws": "^8.20.0"
+  }
+}
