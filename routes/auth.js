@@ -41,7 +41,7 @@ router.post('/login', async (req, res) => {
       console.error('Session insert error:', sessionError);
     }
 
-    return res.json({ success: true, email: user.email });
+    return res.json({ success: true, token, email: user.email });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, error: 'Server error' });
