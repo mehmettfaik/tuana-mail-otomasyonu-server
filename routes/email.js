@@ -30,8 +30,9 @@ router.post('/send', async (req, res) => {
       targetEmails = [fallback];
     }
 
+    const signature = `<br/><br/><img src="https://drive.google.com/uc?export=view&id=1S5BcNm2sCaFUllzpPYik43fDkhZTIOYA" alt="Tuana Textile" style="max-width:500px;height:auto;" />`;
     const trackingPixel = `<img src="${process.env.TRACKING_BASE_URL}/api/track/${contact_id}" width="1" height="1" style="display:none" />`;
-    const finalHtml = `<div style="white-space: pre-wrap; font-family: inherit;">${body}</div>` + trackingPixel;
+    const finalHtml = `<div style="white-space: pre-wrap; font-family: inherit;">${body}</div>` + signature + trackingPixel;
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
