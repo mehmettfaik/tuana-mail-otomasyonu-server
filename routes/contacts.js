@@ -35,39 +35,105 @@ router.post('/bulk', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid data' });
     }
 
-    const payload = contacts.map(c => {
-      const contactObj = {
-        first_name: c.first_name,
-        last_name: c.last_name,
-        company_name: c.company_name,
-        country: c.country,
-        website: c.website,
-        position: c.position,
-        existing_email: c.existing_email,
-        email_sent: false,
-        email_opened: false,
-        replied: false
-      };
+    // Fetch existing contacts to check for duplicates
+    // We pull first_name, last_name, company_name and existing_email for matching
+    const { data: existingContacts, error: fetchError } = await supabase
+      .from('contacts')
+      .select('first_name, last_name, company_name, existing_email');
 
-      // Add guessed emails if provided
-      if (c.guessedEmails && Array.isArray(c.guessedEmails)) {
-        c.guessedEmails.forEach((email, i) => {
-          if (i < 18) {
-            contactObj[`guessed_email_${i + 1}`] = email;
-          }
-        });
+    if (fetchError) throw fetchError;
+
+    // Build a Set of normalized keys for fast lookup
+    const existingKeys = new Set();
+    (existingContacts || []).forEach(ec => {
+      // Key 1: first_name + last_name + company_name (case-insensitive, trimmed)
+      const nameKey = [
+        (ec.first_name || '').toLowerCase().trim(),
+        (ec.last_name || '').toLowerCase().trim(),
+        (ec.company_name || '').toLowerCase().trim()
+      ].join('|');
+      existingKeys.add(nameKey);
+
+      // Key 2: existing_email (if present)
+      if (ec.existing_email && ec.existing_email.trim()) {
+        existingKeys.add('email:' + ec.existing_email.toLowerCase().trim());
       }
-
-      return contactObj;
     });
 
-    const { data, error } = await supabase
-      .from('contacts')
-      .insert(payload);
+    const duplicates = [];
+    const newContacts = [];
 
-    if (error) throw error;
+    contacts.forEach(c => {
+      const nameKey = [
+        (c.first_name || '').toLowerCase().trim(),
+        (c.last_name || '').toLowerCase().trim(),
+        (c.company_name || '').toLowerCase().trim()
+      ].join('|');
 
-    return res.json({ success: true, count: payload.length });
+      const emailKey = c.existing_email && c.existing_email.trim()
+        ? 'email:' + c.existing_email.toLowerCase().trim()
+        : null;
+
+      const isDuplicate = existingKeys.has(nameKey) || (emailKey && existingKeys.has(emailKey));
+
+      if (isDuplicate) {
+        duplicates.push({
+          first_name: c.first_name,
+          last_name: c.last_name,
+          company_name: c.company_name,
+          existing_email: c.existing_email
+        });
+      } else {
+        newContacts.push(c);
+        // Add this contact's keys to the set so intra-batch duplicates are also caught
+        existingKeys.add(nameKey);
+        if (emailKey) existingKeys.add(emailKey);
+      }
+    });
+
+    let insertedCount = 0;
+
+    if (newContacts.length > 0) {
+      const payload = newContacts.map(c => {
+        const contactObj = {
+          first_name: c.first_name,
+          last_name: c.last_name,
+          company_name: c.company_name,
+          country: c.country,
+          website: c.website,
+          position: c.position,
+          existing_email: c.existing_email,
+          email_sent: false,
+          email_opened: false,
+          replied: false
+        };
+
+        // Add guessed emails if provided
+        if (c.guessedEmails && Array.isArray(c.guessedEmails)) {
+          c.guessedEmails.forEach((email, i) => {
+            if (i < 18) {
+              contactObj[`guessed_email_${i + 1}`] = email;
+            }
+          });
+        }
+
+        return contactObj;
+      });
+
+      const { error } = await supabase
+        .from('contacts')
+        .insert(payload);
+
+      if (error) throw error;
+      insertedCount = payload.length;
+    }
+
+    return res.json({
+      success: true,
+      count: insertedCount,
+      duplicateCount: duplicates.length,
+      duplicates: duplicates.slice(0, 20) // Return first 20 duplicates for display
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, error: 'Server error' });
