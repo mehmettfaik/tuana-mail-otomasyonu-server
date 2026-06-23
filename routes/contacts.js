@@ -35,17 +35,36 @@ router.post('/bulk', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid data' });
     }
 
-    // Fetch existing contacts to check for duplicates
-    // We pull first_name, last_name, company_name and existing_email for matching
-    const { data: existingContacts, error: fetchError } = await supabase
-      .from('contacts')
-      .select('first_name, last_name, company_name, existing_email');
+    console.log(`[BULK UPLOAD] Received ${contacts.length} contacts from Excel`);
 
-    if (fetchError) throw fetchError;
+    // Fetch ALL existing contacts using pagination (Supabase default limit is 1000)
+    let allExistingContacts = [];
+    let from = 0;
+    const batchSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error: fetchError } = await supabase
+        .from('contacts')
+        .select('first_name, last_name, company_name, existing_email')
+        .range(from, from + batchSize - 1);
+
+      if (fetchError) throw fetchError;
+
+      if (data && data.length > 0) {
+        allExistingContacts = allExistingContacts.concat(data);
+        from += batchSize;
+        if (data.length < batchSize) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    console.log(`[BULK UPLOAD] Fetched ${allExistingContacts.length} existing contacts from database`);
 
     // Build a Set of normalized keys for fast lookup
     const existingKeys = new Set();
-    (existingContacts || []).forEach(ec => {
+    allExistingContacts.forEach(ec => {
       // Key 1: first_name + last_name + company_name (case-insensitive, trimmed)
       const nameKey = [
         (ec.first_name || '').toLowerCase().trim(),
@@ -59,6 +78,8 @@ router.post('/bulk', async (req, res) => {
         existingKeys.add('email:' + ec.existing_email.toLowerCase().trim());
       }
     });
+
+    console.log(`[BULK UPLOAD] Built ${existingKeys.size} unique keys for duplicate checking`);
 
     const duplicates = [];
     const newContacts = [];
@@ -77,6 +98,7 @@ router.post('/bulk', async (req, res) => {
       const isDuplicate = existingKeys.has(nameKey) || (emailKey && existingKeys.has(emailKey));
 
       if (isDuplicate) {
+        console.log(`[BULK UPLOAD] DUPLICATE found: ${c.first_name} ${c.last_name} - ${c.company_name} (key: ${nameKey})`);
         duplicates.push({
           first_name: c.first_name,
           last_name: c.last_name,
@@ -90,6 +112,8 @@ router.post('/bulk', async (req, res) => {
         if (emailKey) existingKeys.add(emailKey);
       }
     });
+
+    console.log(`[BULK UPLOAD] Result: ${newContacts.length} new, ${duplicates.length} duplicates`);
 
     let insertedCount = 0;
 
@@ -128,6 +152,8 @@ router.post('/bulk', async (req, res) => {
       insertedCount = payload.length;
     }
 
+    console.log(`[BULK UPLOAD] Inserted ${insertedCount} contacts, skipped ${duplicates.length} duplicates`);
+
     return res.json({
       success: true,
       count: insertedCount,
@@ -135,7 +161,7 @@ router.post('/bulk', async (req, res) => {
       duplicates: duplicates.slice(0, 20) // Return first 20 duplicates for display
     });
   } catch (err) {
-    console.error(err);
+    console.error('[BULK UPLOAD] Error:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
