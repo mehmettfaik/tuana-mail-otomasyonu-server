@@ -19,8 +19,9 @@ const state = {
   currentContact: null,
 };
 
-const DAILY_LIMIT = 450;
-const DELAY_BETWEEN_EMAILS_MS = 30_000; // 30 saniye
+const DAILY_LIMIT = 250;
+const MIN_DELAY_MS = 45_000; // 45 saniye
+const MAX_DELAY_MS = 80_000; // 80 saniye
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -440,9 +441,11 @@ async function processContacts(contacts, subject, body, transporter) {
         }
       }
 
-      // Mailler arası bekleme
+      // Mailler arası rastgele bekleme (spam algısına takılmamak için)
       if (state.isRunning) {
-        await sleep(DELAY_BETWEEN_EMAILS_MS);
+        const randomDelay = Math.floor(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1)) + MIN_DELAY_MS;
+        console.log(`[Automation] Sıradaki mail için ${Math.round(randomDelay / 1000)} saniye bekleniyor...`);
+        await sleep(randomDelay);
       }
     }
   }
