@@ -1,10 +1,23 @@
 import express from 'express';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { startAutomation, stopAutomation, getStatus } from '../services/emailAutomationService.js';
+import { scoreContacts } from '../services/emailValidationService.js';
 
 const router = express.Router();
 
 router.use(authMiddleware);
+
+// POST /api/email-automation/validate
+router.post('/validate', async (req, res) => {
+  try {
+    const { contactIds } = req.body; // opsiyonel — boşsa tüm pending kontaklar
+    const result = await scoreContacts(contactIds || []);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Validation error:', err);
+    res.status(500).json({ success: false, error: err.message || 'Validation failed' });
+  }
+});
 
 // POST /api/email-automation/start
 router.post('/start', async (req, res) => {

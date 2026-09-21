@@ -8,6 +8,7 @@ import contactsRoutes from './routes/contacts.js';
 import emailRoutes from './routes/email.js';
 import trackRoutes from './routes/track.js';
 import emailAutomationRoutes from './routes/emailAutomation.js';
+import apolloAutomationRoutes from './routes/apolloAutomation.js'; // [NEW] Apollo
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -28,6 +29,7 @@ app.use('/api/contacts', contactsRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/track', trackRoutes);
 app.use('/api/email-automation', emailAutomationRoutes);
+app.use('/api/apollo-automation', apolloAutomationRoutes); // [NEW] Apollo
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

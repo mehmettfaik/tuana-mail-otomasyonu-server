@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { supabase } from '../supabaseClient.js';
+import { scoreEmails, SCORE_THRESHOLD } from './emailValidationService.js';
 
 // ── In-memory state ──
 const state = {
@@ -93,6 +94,31 @@ function getContactEmails(contact) {
   }
 
   return emails;
+}
+
+// ── Email skorunu oku (email_scores JSON'undan) ──
+function getEmailScore(contact, email) {
+  if (!contact.email_scores) return null;
+  try {
+    const scores = typeof contact.email_scores === 'string'
+      ? JSON.parse(contact.email_scores)
+      : contact.email_scores;
+
+    // Normalize email for lookup
+    const normalizedEmail = normalizeEmail(email);
+
+    // Key olarak guessed_email_N veya existing_email kullanılıyor
+    // Önce doğrudan email adresiyle, sonra key ile ara
+    for (const [key, score] of Object.entries(scores)) {
+      // Key'e karşılık gelen email adresini bul
+      const keyEmail = normalizeEmail(contact[key] || '');
+      if (keyEmail === normalizedEmail) return score;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ── DB'den kontağın güncel sent_emails verisini oku ──
@@ -380,10 +406,69 @@ async function processContacts(contacts, subject, body, transporter) {
     // Etkili set: DB'den gelen veya fallback
     const sentSet = alreadySent || parseSentEmails(contact.sent_emails);
 
+    // ────────────────────────────────────────────────────────
+    // SKOR: Eğer kontağın email_scores'u yoksa otomatik puanla
+    // ────────────────────────────────────────────────────────
+    if (!contact.email_scores) {
+      try {
+        console.log(`[Automation] Auto-scoring ${contact.first_name} ${contact.last_name}...`);
+        const scores = await scoreEmails(contact);
+        contact.email_scores = JSON.stringify(scores);
+        await supabase
+          .from('contacts')
+          .update({ email_scores: contact.email_scores })
+          .eq('id', contact.id);
+        console.log(`[Automation] ✓ Scores: ${contact.email_scores}`);
+      } catch (err) {
+        console.error(`[Automation] Scoring failed for ${contact.first_name} ${contact.last_name}:`, err.message);
+        // Puanlama başarısız olsa bile devam et (tüm emailler gönderilir)
+      }
+    }
+
     // Bu kontak için gönderilecek adres kalmamışsa atla
-    const pendingEmails = allEmails.filter(e => !sentSet.has(e));
+    let pendingEmails = allEmails.filter(e => !sentSet.has(e));
+
+    // Skor filtresi: sadece en yüksek puanlı emailler gönderilir
+    if (contact.email_scores) {
+      const beforeFilter = pendingEmails.length;
+
+      // Her email'in skorunu al
+      const emailsWithScores = pendingEmails.map(e => ({
+        email: e,
+        score: getEmailScore(contact, e)
+      }));
+
+      // Skoru olan emaillerden en yüksek skoru bul
+      const scoredEmails = emailsWithScores.filter(e => e.score !== null);
+      
+      if (scoredEmails.length > 0) {
+        const maxScore = Math.max(...scoredEmails.map(e => e.score));
+
+        // Sadece eşik üstü VE en yüksek skora sahip emailler
+        if (maxScore >= SCORE_THRESHOLD) {
+          pendingEmails = emailsWithScores
+            .filter(e => e.score === maxScore || e.score === null)
+            .map(e => e.email);
+            
+          // KURAL: Eğer max skor 100 ise, kesinlikle doğru e-postadır, 
+          // gereksiz yere birden fazla mail atmamak için SADECE İLK 100 puanlık e-postayı al.
+          if (maxScore === 100 && pendingEmails.length > 0) {
+            pendingEmails = [pendingEmails[0]];
+          }
+        } else {
+          // En yüksek skor bile eşik altıysa hiçbirini gönderme
+          pendingEmails = [];
+        }
+      }
+
+      if (beforeFilter !== pendingEmails.length) {
+        const maxScore = scoredEmails.length > 0 ? Math.max(...scoredEmails.map(e => e.score)) : 0;
+        console.log(`[Automation] Score filter: ${beforeFilter} → ${pendingEmails.length} emails (max score: ${maxScore}, threshold: ${SCORE_THRESHOLD})`);
+      }
+    }
+
     if (pendingEmails.length === 0) {
-      console.log(`[Automation] Skipping ${contact.first_name} ${contact.last_name} — all ${allEmails.length} emails already in sent_emails`);
+      console.log(`[Automation] Skipping ${contact.first_name} ${contact.last_name} — all ${allEmails.length} emails already sent or below score threshold`);
       // email_sent flag'ini de düzelt
       await supabase.from('contacts').update({ email_sent: true }).eq('id', contact.id);
       continue;
@@ -483,5 +568,6 @@ export function getStatus() {
     message: state.dashboardMessage,
     currentContact: state.currentContact,
     errors: state.errors.slice(0, 20),
+    scoreThreshold: SCORE_THRESHOLD,
   };
 }
